@@ -107,7 +107,20 @@ export class AriaTablistElement extends baseClass {
    * Orientation of the tablist ('horizontal' or 'vertical').
    */
   @property({type: String, reflect: true})
-  orientation: 'horizontal' | 'vertical' = 'horizontal';
+  get orientation(): 'horizontal' | 'vertical' {
+    return (this[internals].ariaOrientation || 'horizontal') as
+      | 'horizontal'
+      | 'vertical';
+  }
+  set orientation(value: 'horizontal' | 'vertical') {
+    const isVertical = value === 'vertical';
+    this[internals].ariaOrientation = isVertical ? 'vertical' : 'horizontal';
+    // Update focusGroup to match tablist orientation.
+    this.setAttribute(
+      'focusgroup',
+      `tablist ${isVertical ? 'block' : 'inline'}`,
+    );
+  }
 
   @query('slot:not([name])')
   private readonly slotElement!: HTMLSlotElement | null;
@@ -120,10 +133,11 @@ export class AriaTablistElement extends baseClass {
     super();
     if (isServer) return;
     this[internals].role = 'tablist';
-    setupDispatchHooks(this, 'click', 'keydown');
+    // Set initial orientation and focusgroup.
+    this.orientation = 'horizontal';
+    setupDispatchHooks(this, 'click', 'focusin');
     this.addEventListener('click', this.handleClick.bind(this));
-    this.addEventListener('keydown', this.handleKeydown.bind(this));
-    this.addEventListener('focusout', this.handleFocusout.bind(this));
+    this.addEventListener('focusin', this.handleFocusin.bind(this));
   }
 
   protected override render() {
@@ -176,17 +190,9 @@ export class AriaTablistElement extends baseClass {
     for (const tab of tabs) {
       this.setTabSelected(tab, tab === tabToSelect);
     }
-
-    this.updateFocusableTab(tabToSelect);
   }
 
-  protected updateFocusableTab(focusableTab: HTMLElement) {
-    for (const tab of this.tabs) {
-      tab.tabIndex = tab === focusableTab ? 0 : -1;
-    }
-  }
-
-  private async handleClick(event: Event) {
+  private handleClick(event: Event) {
     // event.composedPath() needs to be called before dispatch completes.
     const tab = event
       .composedPath()
@@ -206,6 +212,12 @@ export class AriaTablistElement extends baseClass {
     });
   }
 
+  private handleFocusin(event: FocusEvent) {
+    if (this.autoSelect) {
+      this.handleClick(event);
+    }
+  }
+
   protected handleSlotChange() {
     const tabToSelect = this.selectedTab ?? this.tabs[0];
     if (tabToSelect) {
@@ -213,81 +225,6 @@ export class AriaTablistElement extends baseClass {
       // tab was removed or none selected, auto-select the first tab. There
       // should always be a single selected tab while the tablist has children.
       this.updateSelectedTab(tabToSelect);
-    }
-  }
-
-  // focus item on keydown and optionally select it
-  private handleKeydown(event: KeyboardEvent) {
-    // Allow event to bubble.
-    afterDispatch(event, () => {
-      const isLeft = event.key === 'ArrowLeft';
-      const isRight = event.key === 'ArrowRight';
-      const isUp = event.key === 'ArrowUp';
-      const isDown = event.key === 'ArrowDown';
-      const isHome = event.key === 'Home';
-      const isEnd = event.key === 'End';
-      const isVertical = this.orientation === 'vertical';
-      const isDirectionKey = isVertical ? isUp || isDown : isLeft || isRight;
-      // Ignore non-navigation keys
-      if (event.defaultPrevented || (!isDirectionKey && !isHome && !isEnd)) {
-        return;
-      }
-
-      const {tabs} = this;
-      // Don't try to select another tab if there aren't any.
-      if (tabs.length < 2) {
-        return;
-      }
-
-      // Prevent default interactions, such as scrolling.
-      event.preventDefault();
-
-      let indexToFocus: number;
-      if (isHome || isEnd) {
-        indexToFocus = isHome ? 0 : tabs.length - 1;
-      } else {
-        // Check if moving forwards or backwards
-        const isRtl = getComputedStyle(this).direction === 'rtl';
-        const forwards = isVertical ? isDown : isRtl ? isLeft : isRight;
-        const {focusedTab} = this;
-        if (!focusedTab) {
-          // If there is not already a tab focused, select the first or last tab
-          // based on the direction we're traveling.
-          indexToFocus = forwards ? 0 : tabs.length - 1;
-        } else {
-          const focusedIndex = this.tabs.indexOf(focusedTab);
-          indexToFocus = forwards ? focusedIndex + 1 : focusedIndex - 1;
-          if (indexToFocus >= tabs.length) {
-            // Return to start if moving past the last item.
-            indexToFocus = 0;
-          } else if (indexToFocus < 0) {
-            // Go to end if moving before the first item.
-            indexToFocus = tabs.length - 1;
-          }
-        }
-      }
-
-      const tabToFocus = tabs[indexToFocus];
-      tabToFocus.focus();
-      if (this.autoSelect) {
-        const previousTab = this.selectedTab;
-        this.updateSelectedTab(tabToFocus);
-        this.onTabChange(previousTab);
-      } else {
-        this.updateFocusableTab(tabToFocus);
-      }
-    });
-  }
-
-  private handleFocusout() {
-    // restore focus to selected item when blurring the tab bar.
-    if (this.matches(':focus-within')) {
-      return;
-    }
-
-    const {selectedTab} = this;
-    if (selectedTab) {
-      this.updateFocusableTab(selectedTab);
     }
   }
 }
